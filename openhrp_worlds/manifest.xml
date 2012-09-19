@@ -1,0 +1,14 @@
+<package>
+  <description brief="openhrp_worlds">
+
+     openhrp_worlds
+
+  </description>
+  <author>Thomas Moulard</author>
+  <license>BSD</license>
+  <review status="unreviewed" notes=""/>
+  <url>http://ros.org/wiki/openhrp_worlds</url>
+
+</package>
+
+

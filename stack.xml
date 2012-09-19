@@ -1,0 +1,9 @@
+<stack>
+  <description brief="simulator_openhrp">simulator_openhrp</description>
+  <author>Maintained by Thomas Moulard</author>
+  <license>BSD</license>  
+  <review status="unreviewed" notes=""/>
+  <url>http://ros.org/wiki/simulator_openhrp</url>
+  <depend stack="ros" />
+
+</stack>
