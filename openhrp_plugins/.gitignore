@@ -1,2 +1,6 @@
 bin/
 build/
+cfg/cpp
+src/openhrp_plugins/
+docs/
+*.cfgc

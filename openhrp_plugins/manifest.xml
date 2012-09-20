@@ -10,7 +10,12 @@
   <url>http://ros.org/wiki/openhrp_plugins</url>
 
   <depend package="roscpp"/>
+  <depend package="dynamic_reconfigure"/>
+  <depend package="rosgraph_msgs"/>
+
   <depend package="openhrp"/>
+
+  <rosdep name="boost"/>
 </package>
 
 
