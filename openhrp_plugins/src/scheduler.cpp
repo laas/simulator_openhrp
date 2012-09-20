@@ -1,8 +1,14 @@
 #include <stdexcept>
 #include <boost/bind.hpp>
+#include <boost/function.hpp>
+
+#include <LinearMath/btMatrix3x3.h>
 
 #include <ros/console.h>
 #include <rosgraph_msgs/Clock.h>
+
+#include <OpenHRP-3.1/hrpModel/ModelLoaderUtil.h>
+#include <OpenHRP-3.1/hrpUtil/OnlineViewerUtil.h>
 
 #include "scheduler.hh"
 
@@ -76,7 +82,7 @@ SchedulerNode::SchedulerNode (int argc, char* argv[],
   cxt = CosNaming::NamingContext::_narrow (nS);
 
   // Initialize online viewer.
-  //onlineViewer_ = getOnlineViewer(argc, argv);
+  onlineViewer_ = hrp::getOnlineViewer(orb_);
 
   // Initialize dynamics simulator.
   OpenHRP::DynamicsSimulatorFactory_var dynamicsSimulatorFactory;
@@ -99,6 +105,16 @@ SchedulerNode::SchedulerNode (int argc, char* argv[],
     ("/clock", 1);
 
   // Initialize services.
+  typedef boost::function<
+  bool (openhrp_msgs::SpawnModel::Request&,
+	openhrp_msgs::SpawnModel::Response&)>
+  spawnModelCallback_t;
+  spawnModelCallback_t spawnModelCb =
+    boost::bind (&SchedulerNode::spawnVrmlModelCallback,
+		 this, _1, _2);
+  spawnVrmlModel_ =
+    nodeHandle_.advertiseService
+    ("spawn_vrml_model", spawnModelCb);
 
   // Enable simulated time.
   nodeHandle_.setParam ("/use_sim_time", true);
@@ -154,6 +170,49 @@ SchedulerNode::reconfigure ()
   dynamicsSimulator_->initSimulation();
 }
 
+bool
+SchedulerNode::spawnVrmlModelCallback
+(openhrp_msgs::SpawnModel::Request& req,
+ openhrp_msgs::SpawnModel::Response& res)
+{
+  OpenHRP::BodyInfo_var model =
+    hrp::loadBodyInfo (req.model_vrml.c_str (), orb_);
+
+  // Load model into online viewer.
+  onlineViewer_->load (req.model_name.c_str (),
+		       req.model_vrml.c_str ());
+  onlineViewer_->clearLog ();
+
+  dynamicsSimulator_->registerCharacter
+    (req.model_name.c_str (), model);
+
+
+  // Set model initial position / posture.
+  OpenHRP::DblSequence trans;
+  trans.length(12);
+
+  trans[0] = req.initial_pose.position.x;
+  trans[1] = req.initial_pose.position.y;
+  trans[2] = req.initial_pose.position.z;
+
+  btQuaternion quaternion
+    (req.initial_pose.orientation.x,
+     req.initial_pose.orientation.y,
+     req.initial_pose.orientation.z,
+     req.initial_pose.orientation.w);
+  btMatrix3x3 rotation (quaternion);
+
+  for (unsigned i = 0; i < 3; ++i)
+    for (unsigned j = 0; j < 3; ++j)
+      trans[3 + (i * 3) + j] = rotation[i][j];
+
+  dynamicsSimulator_->setCharacterLinkData
+    (req.model_name.c_str (), "WAIST",
+     OpenHRP::DynamicsSimulator::ABS_TRANSFORM, trans);
+
+  models_.push_back (model);
+  return true;
+}
 
 void
 SchedulerNode::spin ()

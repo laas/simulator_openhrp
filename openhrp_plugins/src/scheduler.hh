@@ -7,6 +7,8 @@
 # include <ros/time.h>
 # include <dynamic_reconfigure/server.h>
 
+# include <openhrp_msgs/SpawnModel.h>
+
 # include <openhrp_plugins/SimulationConfig.h>
 
 # include <OpenHRP-3.1/hrpCorba/Controller.hh>
@@ -31,6 +33,10 @@ private:
 		      uint32_t level);
   void reconfigure ();
 
+  bool spawnVrmlModelCallback
+  (openhrp_msgs::SpawnModel::Request&,
+   openhrp_msgs::SpawnModel::Response&);
+
   // Node handles.
   ros::NodeHandle nodeHandle_;
   ros::NodeHandle nodeHandlePrivate_;
@@ -51,6 +57,7 @@ private:
   OpenHRP::OnlineViewer_var onlineViewer_;
   OpenHRP::DynamicsSimulator_var dynamicsSimulator_;
   std::vector<OpenHRP::Controller_var> controllers_;
+  std::vector<OpenHRP::BodyInfo_var> models_;
 
   // Dynamic reconfigure.
   boost::array<double, 3> gravity_;
