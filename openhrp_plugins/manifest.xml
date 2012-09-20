@@ -9,6 +9,8 @@
   <review status="unreviewed" notes=""/>
   <url>http://ros.org/wiki/openhrp_plugins</url>
 
+  <depend package="roscpp"/>
+  <depend package="openhrp"/>
 </package>
 
 
