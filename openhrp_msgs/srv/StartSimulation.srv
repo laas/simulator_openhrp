@@ -1,0 +1,3 @@
+---
+bool success          # return true if simulation successfully started
+string status_message # comments if available
