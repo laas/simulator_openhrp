@@ -9,6 +9,9 @@
 
 #include <ros/console.h>
 #include <rosgraph_msgs/Clock.h>
+#include <nav_msgs/Odometry.h>
+#include <std_srvs/Empty.h>
+#include <sensor_msgs/JointState.h>
 
 #include <OpenHRP-3.1/hrpModel/ModelLoaderUtil.h>
 #include <OpenHRP-3.1/hrpUtil/OnlineViewerUtil.h>
@@ -19,13 +22,14 @@ template <typename X, typename X_ptr>
 X_ptr checkCorbaServer(std::string n, CosNaming::NamingContext_var &cxt)
 {
   CosNaming::Name ncName;
-  ncName.length(1);
-  ncName[0].id = CORBA::string_dup(n.c_str());
-  ncName[0].kind = CORBA::string_dup("");
+  ncName.length (1);
+  ncName[0].id = CORBA::string_dup (n.c_str ());
+  ncName[0].kind = CORBA::string_dup ("");
   X_ptr srv = NULL;
-  try {
-    srv = X::_narrow (cxt->resolve (ncName));
-  }
+  try
+    {
+      srv = X::_narrow (cxt->resolve (ncName));
+    }
   catch (const CosNaming::NamingContext::NotFound &exc)
     {
       ROS_ERROR_STREAM (n << " not found: ");
@@ -60,16 +64,21 @@ SchedulerNode::SchedulerNode (int argc, char* argv[],
   : state_ (STATE_IDLE),
     nodeHandle_ (nh),
     nodeHandlePrivate_ (privateNh),
+    transformBroadcaster_ (),
     mutex_ (),
     reconfigureSrv_ (mutex_, nodeHandlePrivate_),
     clock_ (),
     spawnVrmlModel_ (),
     startSimulation_ (),
+    pauseSimulation_ (),
+    unpauseSimulation_ (),
     orb_ (),
     cxt_ (),
     onlineViewer_ (),
     dynamicsSimulator_ (),
     controllers_ (),
+    models_ (),
+    worldState_ (),
     gravity_ (),
     timeStep_ (),
     integrationMethod_ (),
@@ -123,6 +132,31 @@ SchedulerNode::SchedulerNode (int argc, char* argv[],
     nodeHandle_.advertiseService
     ("start_simulation", startSimulationCb);
 
+  //  Pause simulation.
+  typedef boost::function<
+  bool (std_srvs::Empty::Request&,
+	std_srvs::Empty::Response&)>
+  pauseSimulationCallback_t;
+  pauseSimulationCallback_t pauseSimulationCb =
+    boost::bind (&SchedulerNode::pauseSimulationCallback,
+		 this, _1, _2);
+  pauseSimulation_ =
+    nodeHandle_.advertiseService
+    ("pause_simulation", pauseSimulationCb);
+
+  //  Unpause simulation.
+  typedef boost::function<
+  bool (std_srvs::Empty::Request&,
+	std_srvs::Empty::Response&)>
+  unpauseSimulationCallback_t;
+  unpauseSimulationCallback_t unpauseSimulationCb =
+    boost::bind (&SchedulerNode::unpauseSimulationCallback,
+		 this, _1, _2);
+  unpauseSimulation_ =
+    nodeHandle_.advertiseService
+    ("unpause_simulation", unpauseSimulationCb);
+
+
   // Enable simulated time.
   nodeHandle_.setParam ("/use_sim_time", true);
 }
@@ -173,9 +207,38 @@ SchedulerNode::spawnVrmlModelCallback
   res.status_message = "";
   res.success = false;
 
-  OpenHRP::BodyInfo_var model =
-    hrp::loadBodyInfo (req.model_vrml.c_str (), orb_);
-  if (!model)
+  ModelInfo model;
+  model.meta = req;
+
+  boost::format jointStateTopic ("%1%/joint_state");
+  jointStateTopic % model.meta.model_name;
+  model.jointState =
+    nodeHandle_.advertise<sensor_msgs::JointState>
+    (jointStateTopic.str (), 1);
+
+  boost::format odometryTopic ("%1%/odometry");
+  odometryTopic % model.meta.model_name;
+  model.odometry =
+    nodeHandle_.advertise<sensor_msgs::JointState>
+    (odometryTopic.str (), 1);
+
+  try
+    {
+      model.bodyInfo =
+	hrp::loadBodyInfo (req.model_vrml.c_str (), orb_);
+    }
+  catch (OpenHRP::ModelLoader::ModelLoaderException& e)
+    {
+      boost::format fmt ("failed to load model: %1%. Reason: %2%");
+      fmt % req.model_vrml % e.description;
+
+      ROS_WARN_STREAM (fmt.str ());
+      res.status_message = fmt.str ();
+      res.success = false;
+      return true;
+    }
+
+  if (!model.bodyInfo)
     {
       boost::format fmt ("failed to load model: %1%");
       fmt % req.model_vrml;
@@ -185,8 +248,8 @@ SchedulerNode::spawnVrmlModelCallback
       res.success = false;
       return true;
     }
-  models_.push_back (std::make_pair (req, model));
 
+  models_.push_back (model);
   res.status_message = "";
   res.success = true;
   return true;
@@ -209,17 +272,14 @@ SchedulerNode::startSimulationCallback
 
 
   // Load models into online viewer.
-  typedef std::pair<openhrp_msgs::SpawnModel::Request,
-    OpenHRP::BodyInfo_var> model_t;
-
   if (CORBA::is_nil (onlineViewer_))
     ROS_WARN_STREAM ("Online Viewer not found");
   else
     {
-      BOOST_FOREACH (const model_t& model, models_)
+      BOOST_FOREACH (const ModelInfo& model, models_)
 	{
-	  onlineViewer_->load (model.first.model_name.c_str (),
-			       model.first.model_vrml.c_str ());
+	  onlineViewer_->load (model.meta.model_name.c_str (),
+			       model.meta.model_vrml.c_str ());
 	}
       onlineViewer_->clearLog ();
     }
@@ -248,10 +308,10 @@ SchedulerNode::startSimulationCallback
     }
 
   // Register models into the dynamics simulator.
-  BOOST_FOREACH (const model_t& model, models_)
+  BOOST_FOREACH (const ModelInfo& model, models_)
       dynamicsSimulator_->registerCharacter
-	(model.first.model_name.c_str (),
-	 model.second);
+	(model.meta.model_name.c_str (),
+	 model.bodyInfo);
 
   // Setup the simulation.
   dynamicsSimulator_->init
@@ -266,21 +326,21 @@ SchedulerNode::startSimulationCallback
   dynamicsSimulator_->setGVector (g);
 
   // Place the models into the simulation.
-  BOOST_FOREACH (const model_t& model, models_)
+  BOOST_FOREACH (const ModelInfo& model, models_)
     {
       // Set position.
       OpenHRP::DblSequence trans;
       trans.length(12);
 
-      trans[0] = model.first.initial_pose.position.x;
-      trans[1] = model.first.initial_pose.position.y;
-      trans[2] = model.first.initial_pose.position.z;
+      trans[0] = model.meta.initial_pose.position.x;
+      trans[1] = model.meta.initial_pose.position.y;
+      trans[2] = model.meta.initial_pose.position.z;
 
       btQuaternion quaternion
-	(model.first.initial_pose.orientation.x,
-	 model.first.initial_pose.orientation.y,
-	 model.first.initial_pose.orientation.z,
-	 model.first.initial_pose.orientation.w);
+	(model.meta.initial_pose.orientation.x,
+	 model.meta.initial_pose.orientation.y,
+	 model.meta.initial_pose.orientation.z,
+	 model.meta.initial_pose.orientation.w);
       btMatrix3x3 rotation (quaternion);
 
       for (unsigned i = 0; i < 3; ++i)
@@ -288,7 +348,7 @@ SchedulerNode::startSimulationCallback
 	  trans[3 + (i * 3) + j] = rotation[i][j];
 
       dynamicsSimulator_->setCharacterLinkData
-	(model.first.model_name.c_str (), "WAIST",
+	(model.meta.model_name.c_str (), "WAIST",
 	 OpenHRP::DynamicsSimulator::ABS_TRANSFORM, trans);
 
       //FIXME: set joint angles.
@@ -307,16 +367,16 @@ SchedulerNode::startSimulationCallback
   double slipFric = 0.5;
   double culling_thresh = 0.01;
 
-  BOOST_FOREACH (const model_t& model1, models_)
+  BOOST_FOREACH (const ModelInfo& model1, models_)
     {
-      BOOST_FOREACH (const model_t& model2, models_)
+      BOOST_FOREACH (const ModelInfo& model2, models_)
 	{
-	  if (model1.second == model2.second)
+	  if (model1.bodyInfo == model2.bodyInfo)
 	    continue;
 
 	  dynamicsSimulator_->registerCollisionCheckPair
-	    (model1.first.model_name.c_str (), "",
-	     model2.first.model_name.c_str (), "",
+	    (model1.meta.model_name.c_str (), "",
+	     model2.meta.model_name.c_str (), "",
 	     statFric, slipFric, K, C, culling_thresh, 0.0);
 	}
     }
@@ -340,12 +400,150 @@ SchedulerNode::startSimulationCallback
   return true;
 }
 
+bool
+SchedulerNode::pauseSimulationCallback
+(std_srvs::Empty::Request& req,
+ std_srvs::Empty::Response& res)
+{
+  if (!state_ == STATE_IDLE)
+    return false;
+  state_ = STATE_PAUSED;
+  return true;
+}
+
+bool
+SchedulerNode::unpauseSimulationCallback
+(std_srvs::Empty::Request& req,
+ std_srvs::Empty::Response& res)
+{
+  if (!state_ == STATE_IDLE)
+    return false;
+  state_ = STATE_STARTED;
+  return true;
+}
+
+namespace
+{
+  static void copy (std::vector<double>& dst,
+		    const OpenHRP::DblSequence_var& src)
+  {
+    dst.resize (src->length());
+    for (unsigned i = 0; i < src->length (); ++i)
+      dst[i] = src.in ()[i];
+  }
+} // end of anonymous namespace.
+
+void
+SchedulerNode::publishModelsData ()
+{
+  BOOST_FOREACH (const ModelInfo& model, models_)
+    {
+      // Retrieve data.
+      OpenHRP::DblSequence_var q;
+      OpenHRP::DblSequence_var dq;
+      OpenHRP::DblSequence_var tau;
+      OpenHRP::DblSequence_var position;
+      OpenHRP::DblSequence_var velocity;
+      OpenHRP::DblSequence_var acceleration;
+
+      try
+	{
+	  dynamicsSimulator_->getCharacterAllLinkData
+	    (model.meta.model_name.c_str (),
+	     OpenHRP::DynamicsSimulator::JOINT_VALUE, q);
+	  
+	  dynamicsSimulator_->getCharacterAllLinkData
+	    (model.meta.model_name.c_str (),
+	     OpenHRP::DynamicsSimulator::JOINT_VELOCITY, dq);
+	  
+	  dynamicsSimulator_->getCharacterAllLinkData
+	    (model.meta.model_name.c_str (),
+	     OpenHRP::DynamicsSimulator::JOINT_TORQUE, tau);
+	  
+	  dynamicsSimulator_->getCharacterAllLinkData
+	    (model.meta.model_name.c_str (),
+	     OpenHRP::DynamicsSimulator::ABS_TRANSFORM, position);
+	  
+	  dynamicsSimulator_->getCharacterAllLinkData
+	    (model.meta.model_name.c_str (),
+	     OpenHRP::DynamicsSimulator::ABS_VELOCITY, velocity);
+	  
+	  dynamicsSimulator_->getCharacterAllLinkData
+	    (model.meta.model_name.c_str (),
+	     OpenHRP::DynamicsSimulator::ABS_ACCELERATION, acceleration);
+	}
+      catch (...)
+	{} //FIXME:
+
+      // Joint state.
+      sensor_msgs::JointStatePtr jointState
+	(new sensor_msgs::JointState);
+      jointState->header.seq = 0;
+      jointState->header.stamp = time_;
+      jointState->header.frame_id = "";
+      //jointState->name
+      copy (jointState->position, q);
+      copy (jointState->velocity, dq);
+      copy (jointState->effort, tau);
+      model.jointState.publish (jointState);
+
+
+      // Odometry.
+      nav_msgs::OdometryPtr odometry
+	(new nav_msgs::Odometry);
+
+      odometry->header.seq = 0;
+      odometry->header.stamp = time_;
+      odometry->header.frame_id = "openhrp";
+      odometry->child_frame_id = model.meta.model_name;
+      odometry->pose.pose.position.x = 0.;
+      odometry->pose.pose.position.y = 0.;
+      odometry->pose.pose.position.z = 0.;
+      odometry->pose.pose.orientation.x = 0.;
+      odometry->pose.pose.orientation.y = 0.;
+      odometry->pose.pose.orientation.z = 0.;
+      odometry->pose.pose.orientation.w = 1.;
+      for (unsigned i = 0; i < 6; ++i)
+	for (unsigned j = 0; j < 6; ++j)
+	  odometry->pose.covariance[(i * 6) + j] =
+	    (i == j) ? 1. : 0.;
+
+      odometry->twist.twist.linear.x = 0.;
+      odometry->twist.twist.linear.y = 0.;
+      odometry->twist.twist.linear.z = 0.;
+      odometry->twist.twist.angular.x = 0.;
+      odometry->twist.twist.angular.y = 0.;
+      odometry->twist.twist.angular.z = 0.;
+      for (unsigned i = 0; i < 6; ++i)
+	for (unsigned j = 0; j < 6; ++j)
+	  odometry->twist.covariance[(i * 6) + j] =
+	    (i == j) ? 1. : 0.;
+      model.odometry.publish (odometry);
+
+      // Tf.
+      geometry_msgs::TransformStamped transform;
+      transform.header.seq = 0;
+      transform.header.stamp = time_;
+      transform.header.frame_id = "openhrp";
+      transform.child_frame_id = model.meta.model_name;
+
+      transform.transform.translation.x = 0.;
+      transform.transform.translation.y = 0.;
+      transform.transform.translation.z = 0.;
+
+      transform.transform.rotation.x = 0.;
+      transform.transform.rotation.y = 0.;
+      transform.transform.rotation.z = 0.;
+      transform.transform.rotation.w = 1.;
+
+      transformBroadcaster_.sendTransform (transform);
+    }
+}
+
 void
 SchedulerNode::spin ()
 {
   ROS_INFO ("scheduler started");
-
-  OpenHRP::WorldState_var state;
 
   ros::Rate rate (100);
   while (ros::ok ())
@@ -355,9 +553,10 @@ SchedulerNode::spin ()
 	  time_ += ros::Duration (timeStep_);
 	  dynamicsSimulator_->stepSimulation ();
 
-	  dynamicsSimulator_->getWorldState (state);
+	  dynamicsSimulator_->getWorldState (worldState_);
 	  if (!CORBA::is_nil (onlineViewer_))
-	    onlineViewer_->update (state);
+	    onlineViewer_->update (worldState_);
+	  publishModelsData ();
 	}
 
       // Publish simulation results.

@@ -6,6 +6,8 @@
 # include <ros/ros.h>
 # include <ros/time.h>
 # include <dynamic_reconfigure/server.h>
+# include <tf/transform_broadcaster.h>
+# include <std_srvs/Empty.h>
 
 # include <openhrp_msgs/SpawnModel.h>
 # include <openhrp_msgs/StartSimulation.h>
@@ -43,6 +45,16 @@ private:
   (openhrp_msgs::StartSimulation::Request&,
    openhrp_msgs::StartSimulation::Response&);
 
+  bool pauseSimulationCallback
+  (std_srvs::Empty::Request&,
+   std_srvs::Empty::Response&);
+
+  bool unpauseSimulationCallback
+  (std_srvs::Empty::Request&,
+   std_srvs::Empty::Response&);
+
+  void publishModelsData ();
+
   enum State
     {
       STATE_IDLE,
@@ -51,12 +63,24 @@ private:
       STATE_MAX
     };
 
+  struct ModelInfo
+  {
+    openhrp_msgs::SpawnModel::Request meta;
+    OpenHRP::BodyInfo_var bodyInfo;
+
+    ros::Publisher jointState;
+    ros::Publisher odometry;
+  };
+
   // Simulation state.
   State state_;
 
   // Node handles.
   ros::NodeHandle nodeHandle_;
   ros::NodeHandle nodeHandlePrivate_;
+
+  // Tf transform broadcaster.
+  tf::TransformBroadcaster transformBroadcaster_;
 
   // Dynamic reconfiguration.
   boost::recursive_mutex mutex_;
@@ -69,15 +93,17 @@ private:
   ros::ServiceServer spawnVrmlModel_;
   ros::ServiceServer startSimulation_;
 
+  ros::ServiceServer pauseSimulation_;
+  ros::ServiceServer unpauseSimulation_;
+
   // CORBA
   CORBA::ORB_var orb_;
   CosNaming::NamingContext_var cxt_;
   OpenHRP::OnlineViewer_var onlineViewer_;
   OpenHRP::DynamicsSimulator_var dynamicsSimulator_;
   std::vector<OpenHRP::Controller_var> controllers_;
-  std::vector<std::pair<
-		openhrp_msgs::SpawnModel::Request,
-		OpenHRP::BodyInfo_var> > models_;
+  std::vector<ModelInfo> models_;
+  OpenHRP::WorldState_var worldState_;
 
   // Dynamic reconfigure.
   boost::array<double, 3> gravity_;
