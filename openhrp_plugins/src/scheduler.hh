@@ -8,6 +8,7 @@
 # include <dynamic_reconfigure/server.h>
 
 # include <openhrp_msgs/SpawnModel.h>
+# include <openhrp_msgs/StartSimulation.h>
 
 # include <openhrp_plugins/SimulationConfig.h>
 
@@ -25,17 +26,33 @@ public:
   explicit SchedulerNode (int argc, char* argv[],
 			  ros::NodeHandle& nh,
 			  ros::NodeHandle& privateNh);
+  ~SchedulerNode ();
+
   void spin ();
 
 private:
   void
   reconfigureCallback(openhrp_plugins::SimulationConfig& config,
 		      uint32_t level);
-  void reconfigure ();
 
   bool spawnVrmlModelCallback
   (openhrp_msgs::SpawnModel::Request&,
    openhrp_msgs::SpawnModel::Response&);
+
+  bool startSimulationCallback
+  (openhrp_msgs::StartSimulation::Request&,
+   openhrp_msgs::StartSimulation::Response&);
+
+  enum State
+    {
+      STATE_IDLE,
+      STATE_STARTED,
+      STATE_PAUSED,
+      STATE_MAX
+    };
+
+  // Simulation state.
+  State state_;
 
   // Node handles.
   ros::NodeHandle nodeHandle_;
@@ -50,20 +67,24 @@ private:
 
   // Services
   ros::ServiceServer spawnVrmlModel_;
-  ros::ServiceServer deleteModel_;
+  ros::ServiceServer startSimulation_;
 
   // CORBA
   CORBA::ORB_var orb_;
+  CosNaming::NamingContext_var cxt_;
   OpenHRP::OnlineViewer_var onlineViewer_;
   OpenHRP::DynamicsSimulator_var dynamicsSimulator_;
   std::vector<OpenHRP::Controller_var> controllers_;
-  std::vector<OpenHRP::BodyInfo_var> models_;
+  std::vector<std::pair<
+		openhrp_msgs::SpawnModel::Request,
+		OpenHRP::BodyInfo_var> > models_;
 
   // Dynamic reconfigure.
   boost::array<double, 3> gravity_;
 
   // Timestep.
   double timeStep_;
+
   // Integration method.
   OpenHRP::DynamicsSimulator::IntegrateMethod integrationMethod_;
   // Enable sensor simulation?
