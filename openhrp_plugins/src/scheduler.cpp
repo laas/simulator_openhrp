@@ -9,9 +9,13 @@
 
 #include <ros/console.h>
 #include <rosgraph_msgs/Clock.h>
+#include <geometry_msgs/WrenchStamped.h>
 #include <nav_msgs/Odometry.h>
 #include <std_srvs/Empty.h>
+#include <sensor_msgs/Image.h>
+#include <sensor_msgs/Imu.h>
 #include <sensor_msgs/JointState.h>
+#include <sensor_msgs/Range.h>
 
 #include <OpenHRP-3.1/hrpModel/ModelLoaderUtil.h>
 #include <OpenHRP-3.1/hrpUtil/OnlineViewerUtil.h>
@@ -253,6 +257,46 @@ SchedulerNode::spawnVrmlModelCallback
       return true;
     }
 
+  // Create sensors publishers.
+  OpenHRP::LinkInfoSequence_var links = model.bodyInfo->links ();
+  for (unsigned i = 0; i < links->length (); ++i)
+    {
+      const OpenHRP::SensorInfoSequence& sensors = links[i].sensors;
+      for (unsigned j = 0; j < sensors.length (); ++j)
+	{
+	  const OpenHRP::SensorInfo& sensor = sensors[j];
+
+	  ros::Publisher pub;
+
+	  boost::format fmt ("%1%/%2%");
+	  fmt
+	    % model.meta.model_name
+	    % sensor.name;
+
+	  std::string sensorType (sensor.type);
+
+	  if (sensorType == "Force")
+	    pub = nodeHandle_.advertise<geometry_msgs::WrenchStamped>
+	      (fmt.str (), 1);
+	  else if (sensorType == "RateGyro")
+	    pub = nodeHandle_.advertise<sensor_msgs::Imu>
+	      (fmt.str (), 1);
+	  else if (sensorType == "Acceleration")
+	    ROS_WARN ("Acceleration sensors not yet supported");
+	  else if (sensorType == "Vision")
+	    pub = nodeHandle_.advertise<sensor_msgs::Image>
+	      (fmt.str (), 1);
+	  else if (sensorType == "Range")
+	    pub = nodeHandle_.advertise<sensor_msgs::Range>
+	      (fmt.str (), 1);
+	  else
+	    ROS_WARN_STREAM ("unknown sensor type: " << sensorType);
+
+	  if (pub)
+	    model.sensors.push_back (pub);
+	}
+    }
+
   models_.push_back (model);
   res.status_message = "";
   res.success = true;
@@ -385,6 +429,14 @@ SchedulerNode::startSimulationCallback
 	}
     }
   dynamicsSimulator_->calcWorldForwardKinematics();
+
+  // Retrieve the view simulator.
+  viewSimulator_ =
+    checkCorbaServer <OpenHRP::ViewSimulator, OpenHRP::ViewSimulator_var>
+    ("ViewSimulator", cxt_);
+
+  if (CORBA::is_nil(viewSimulator_))
+    ROS_WARN ("DynamicsSimulatorFactory not found");
 
   // Load controllers.
 
@@ -549,6 +601,27 @@ SchedulerNode::publishModelsData ()
       transform.transform.rotation.w = 1.;
 
       transformBroadcaster_.sendTransform (transform);
+
+      // Sensors.
+      OpenHRP::SensorState_var sensorState;
+      dynamicsSimulator_->getCharacterSensorState
+	(model.meta.model_name.c_str (), sensorState);
+
+      // Cameras (also a sensor but require a different communication
+      // scheme).
+      //FIXME: handle camera fps.
+      if (!CORBA::is_nil (viewSimulator_))
+	{
+	  OpenHRP::CameraSequence_var cameras;
+	  viewSimulator_->getCameraSequence(cameras);
+	  for(int i = 0; cameras->length(); ++i)
+	    {
+	      OpenHRP::ImageData_var imageData =
+		cameras[i]->getImageData ();
+
+	      sensor_msgs::ImagePtr image (new sensor_msgs::Image);
+	    }
+	}
     }
 }
 

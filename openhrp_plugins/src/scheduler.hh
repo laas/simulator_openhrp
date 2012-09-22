@@ -18,6 +18,7 @@
 # include <OpenHRP-3.1/hrpCorba/DynamicsSimulator.hh>
 # include <OpenHRP-3.1/hrpCorba/ModelLoader.hh>
 # include <OpenHRP-3.1/hrpCorba/OnlineViewer.hh>
+# include <OpenHRP-3.1/hrpCorba/ViewSimulator.hh>
 
 class SchedulerNode
 {
@@ -70,6 +71,7 @@ private:
 
     ros::Publisher jointState;
     ros::Publisher odometry;
+    std::vector<ros::Publisher> sensors;
   };
 
   // Simulation state.
@@ -101,6 +103,7 @@ private:
   CosNaming::NamingContext_var cxt_;
   OpenHRP::OnlineViewer_var onlineViewer_;
   OpenHRP::DynamicsSimulator_var dynamicsSimulator_;
+  OpenHRP::ViewSimulator_var viewSimulator_;
   std::vector<OpenHRP::Controller_var> controllers_;
   std::vector<ModelInfo> models_;
   OpenHRP::WorldState_var worldState_;
