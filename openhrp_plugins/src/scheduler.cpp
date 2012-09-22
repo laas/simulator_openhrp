@@ -489,13 +489,11 @@ SchedulerNode::publishModelsData ()
       jointState->header.stamp = time_;
       jointState->header.frame_id = "";
 
-
       OpenHRP::LinkInfoSequence_var links = model.bodyInfo->links ();
       jointState->name.resize (links->length ());
       for (unsigned i = 0; i < links->length (); ++i)
 	jointState->name[i] = links[i].name;
 
-      //jointState->name
       copy (jointState->position, q);
       copy (jointState->velocity, dq);
       copy (jointState->effort, tau);
