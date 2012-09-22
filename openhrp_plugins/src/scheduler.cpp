@@ -84,7 +84,9 @@ SchedulerNode::SchedulerNode (int argc, char* argv[],
     gravity_ (),
     timeStep_ (),
     integrationMethod_ (),
-    enableSensor_ ()
+    enableSensor_ (),
+    time_ (),
+    worldFrame_ ("openhrp")
 {
   // Dynamic reconfigure.
   reconfigureSrv_t::CallbackType f =
@@ -486,6 +488,13 @@ SchedulerNode::publishModelsData ()
       jointState->header.seq = 0;
       jointState->header.stamp = time_;
       jointState->header.frame_id = "";
+
+
+      OpenHRP::LinkInfoSequence_var links = model.bodyInfo->links ();
+      jointState->name.resize (links->length ());
+      for (unsigned i = 0; i < links->length (); ++i)
+	jointState->name[i] = links[i].name;
+
       //jointState->name
       copy (jointState->position, q);
       copy (jointState->velocity, dq);
@@ -499,7 +508,7 @@ SchedulerNode::publishModelsData ()
 
       odometry->header.seq = 0;
       odometry->header.stamp = time_;
-      odometry->header.frame_id = "openhrp";
+      odometry->header.frame_id = worldFrame_;
       odometry->child_frame_id = model.meta.model_name;
       odometry->pose.pose.position.x = 0.;
       odometry->pose.pose.position.y = 0.;
@@ -529,7 +538,7 @@ SchedulerNode::publishModelsData ()
       geometry_msgs::TransformStamped transform;
       transform.header.seq = 0;
       transform.header.stamp = time_;
-      transform.header.frame_id = "openhrp";
+      transform.header.frame_id = worldFrame_;
       transform.child_frame_id = model.meta.model_name;
 
       transform.transform.translation.x = 0.;

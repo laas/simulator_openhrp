@@ -118,6 +118,9 @@ private:
 
   // Current time.
   ros::Time time_;
+
+  // World frame name (simulator reference frame).
+  std::string worldFrame_;
 };
 
 #endif //! OPENHRP_PLUGINS_SCHEDULER_HH
