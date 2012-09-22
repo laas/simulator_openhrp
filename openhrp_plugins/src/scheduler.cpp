@@ -18,6 +18,8 @@
 
 #include "scheduler.hh"
 
+static const char* rootBodyName = "WAIST";
+
 template <typename X, typename X_ptr>
 X_ptr checkCorbaServer(std::string n, CosNaming::NamingContext_var &cxt)
 {
@@ -219,7 +221,7 @@ SchedulerNode::spawnVrmlModelCallback
   boost::format odometryTopic ("%1%/odometry");
   odometryTopic % model.meta.model_name;
   model.odometry =
-    nodeHandle_.advertise<sensor_msgs::JointState>
+    nodeHandle_.advertise<nav_msgs::Odometry>
     (odometryTopic.str (), 1);
 
   try
@@ -348,7 +350,7 @@ SchedulerNode::startSimulationCallback
 	  trans[3 + (i * 3) + j] = rotation[i][j];
 
       dynamicsSimulator_->setCharacterLinkData
-	(model.meta.model_name.c_str (), "WAIST",
+	(model.meta.model_name.c_str (), rootBodyName,
 	 OpenHRP::DynamicsSimulator::ABS_TRANSFORM, trans);
 
       //FIXME: set joint angles.
@@ -451,25 +453,28 @@ SchedulerNode::publishModelsData ()
 	  dynamicsSimulator_->getCharacterAllLinkData
 	    (model.meta.model_name.c_str (),
 	     OpenHRP::DynamicsSimulator::JOINT_VALUE, q);
-	  
+
 	  dynamicsSimulator_->getCharacterAllLinkData
 	    (model.meta.model_name.c_str (),
 	     OpenHRP::DynamicsSimulator::JOINT_VELOCITY, dq);
-	  
+
 	  dynamicsSimulator_->getCharacterAllLinkData
 	    (model.meta.model_name.c_str (),
 	     OpenHRP::DynamicsSimulator::JOINT_TORQUE, tau);
-	  
-	  dynamicsSimulator_->getCharacterAllLinkData
+
+	  dynamicsSimulator_->getCharacterLinkData
 	    (model.meta.model_name.c_str (),
+	     rootBodyName,
 	     OpenHRP::DynamicsSimulator::ABS_TRANSFORM, position);
-	  
-	  dynamicsSimulator_->getCharacterAllLinkData
+
+	  dynamicsSimulator_->getCharacterLinkData
 	    (model.meta.model_name.c_str (),
+	     rootBodyName,
 	     OpenHRP::DynamicsSimulator::ABS_VELOCITY, velocity);
-	  
-	  dynamicsSimulator_->getCharacterAllLinkData
+
+	  dynamicsSimulator_->getCharacterLinkData
 	    (model.meta.model_name.c_str (),
+	     rootBodyName,
 	     OpenHRP::DynamicsSimulator::ABS_ACCELERATION, acceleration);
 	}
       catch (...)
