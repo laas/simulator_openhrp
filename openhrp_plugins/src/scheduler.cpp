@@ -614,10 +614,10 @@ SchedulerNode::publishModelsData ()
 	{
 	  OpenHRP::CameraSequence_var cameras;
 	  viewSimulator_->getCameraSequence(cameras);
-	  for(int i = 0; cameras->length(); ++i)
+	  for(int i = 0; i < cameras->length(); ++i)
 	    {
 	      OpenHRP::ImageData_var imageData =
-		cameras[i]->getImageData ();
+		  cameras[i]->getImageData ();
 
 	      sensor_msgs::ImagePtr image (new sensor_msgs::Image);
 	    }
